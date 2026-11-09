@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyApp</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d1f23; --muted: #626872;
+    --border: #d8dbe0; --accent: #2b6cb0; --accent-text: #ffffff;
+    --ok-bg: #e6f6ea; --ok-text: #1e6b34; --err-bg: #fdecec; --err-text: #a12626;
+    --field: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --card: #1f2227; --text: #e7e9ec; --muted: #9aa1ab;
+      --border: #363a41; --accent: #5a9be0; --accent-text: #0d1117;
+      --ok-bg: #173523; --ok-text: #8fe0a8; --err-bg: #3d1a1a; --err-text: #f5a3a3;
+      --field: #16181c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    max-width: 560px; margin: 0 auto; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  h2 { margin: 24px 0 8px; font-size: 1.1rem; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  label { display: block; font-size: 0.9rem; color: var(--muted); margin: 10px 0 4px; }
+  input {
+    width: 100%; padding: 9px 10px; font: inherit; color: var(--text);
+    background: var(--field); border: 1px solid var(--border); border-radius: 8px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row input { flex: 1; min-width: 0; }
+  button {
+    padding: 9px 14px; font: inherit; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    white-space: nowrap;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .code-input { font-size: 1.4rem; letter-spacing: 0.2em; text-align: center; }
+  .qr { display: flex; justify-content: center; margin: 12px 0; }
+  .qr svg { width: 220px; height: 220px; max-width: 100%; background: #fff; padding: 8px; border-radius: 8px; }
+  .secret { word-break: break-all; }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-weight: 600; }
+  .status.ok { background: var(--ok-bg); color: var(--ok-text); }
+  .status.err { background: var(--err-bg); color: var(--err-text); }
+  .hint { margin-top: 20px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; }
+  a { color: var(--accent); }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0 0; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>MyApp</h1>
+  <p class="muted">A demo website protected with TOTP (RFC 6238) two-factor login.</p>
+
+  <section>
+    <h2>1. Enroll</h2>
+    <label for="enroll-user">Username</label>
+    <div class="row">
+      <input id="enroll-user" autocomplete="off" placeholder="alice">
+      <button id="enroll-btn" type="button">Enroll</button>
+    </div>
+    <div id="enroll-status" class="status err" hidden></div>
+
+    <div id="enroll-result" hidden>
+      <div class="qr" id="qr"></div>
+      <label for="uri">otpauth URI</label>
+      <div class="row">
+        <input id="uri" class="mono" readonly>
+        <button id="copy-btn" type="button" class="secondary">Copy</button>
+      </div>
+      <label>Base32 secret</label>
+      <p id="secret" class="mono secret"></p>
+    </div>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>2. Verify</h2>
+    <label for="verify-user">Username</label>
+    <input id="verify-user" autocomplete="off" placeholder="alice">
+    <label for="code">6-digit code</label>
+    <div class="row">
+      <input id="code" class="mono code-input" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="7" placeholder="000000">
+      <button id="verify-btn" type="button">Verify</button>
+    </div>
+    <div id="verify-status" class="status" hidden></div>
+  </section>
+
+  <div class="hint">
+    <p><strong>Tip:</strong> open <a href="/authenticator" target="authenticator"
+      id="auth-link">My Authenticator</a> in a second window and place it side by side with this one.
+      Copy the otpauth URI there to get codes.</p>
+    <p class="muted">You can also scan the QR code with Google Authenticator or Authy as a cross-check:
+      all of them should show the same code.</p>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  function showStatus(el, ok, text) {
+    el.hidden = false;
+    el.className = "status " + (ok ? "ok" : "err");
+    el.textContent = text;
+  }
+
+  async function postJSON(url, body) {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    } catch (e) {
+      throw new Error("Network error: could not reach the server (" + e.message + ")");
+    }
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* non-JSON body */ }
+    if (!res.ok) {
+      const msg = data && data.error ? data.error : "HTTP " + res.status + " " + res.statusText;
+      throw new Error(msg);
+    }
+    if (!data) throw new Error("Server returned an invalid response");
+    return data;
+  }
+
+  async function enroll() {
+    const username = $("enroll-user").value.trim();
+    const status = $("enroll-status");
+    status.hidden = true;
+    if (!username) { showStatus(status, false, "Please enter a username."); return; }
+    $("enroll-btn").disabled = true;
+    try {
+      const data = await postJSON("/api/enroll", { username });
+      $("qr").innerHTML = data.qr_svg; // server-generated SVG
+      $("uri").value = data.otpauth_uri;
+      $("secret").textContent = data.secret;
+      $("enroll-result").hidden = false;
+      $("verify-user").value = data.username || username;
+      $("verify-status").hidden = true;
+      $("code").focus();
+    } catch (e) {
+      $("enroll-result").hidden = true;
+      showStatus(status, false, e.message);
+    } finally {
+      $("enroll-btn").disabled = false;
+    }
+  }
+
+  async function verify() {
+    const username = $("verify-user").value.trim();
+    const code = $("code").value.replace(/\s+/g, "");
+    const status = $("verify-status");
+    if (!username) { showStatus(status, false, "Please enter a username."); return; }
+    if (!/^\d{6}$/.test(code)) { showStatus(status, false, "Enter the 6-digit code."); return; }
+    $("verify-btn").disabled = true;
+    try {
+      const data = await postJSON("/api/verify", { username, code });
+      showStatus(status, !!data.ok, (data.ok ? "✓ " : "✗ ") + (data.message || (data.ok ? "Code accepted" : "Rejected")));
+    } catch (e) {
+      showStatus(status, false, e.message);
+    } finally {
+      $("verify-btn").disabled = false;
+    }
+  }
+
+  async function copyUri() {
+    const btn = $("copy-btn");
+    const text = $("uri").value;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      $("uri").select();
+      try { document.execCommand("copy"); } catch (e2) { /* ignore */ }
+    }
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+  }
+
+  $("enroll-btn").addEventListener("click", enroll);
+  $("enroll-user").addEventListener("keydown", (e) => { if (e.key === "Enter") enroll(); });
+  $("verify-btn").addEventListener("click", verify);
+  $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") verify(); });
+  $("copy-btn").addEventListener("click", copyUri);
+  $("auth-link").addEventListener("click", (e) => {
+    const w = window.open("/authenticator", "authenticator", "width=480,height=720");
+    if (w) { e.preventDefault(); w.focus(); }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "totp-poc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha1 = "0.10"
+data-encoding = "2"
+rand = "0.8"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }

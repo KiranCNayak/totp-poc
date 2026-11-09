@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Authenticator</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d1f23; --muted: #626872;
+    --border: #d8dbe0; --accent: #2b6cb0; --accent-text: #ffffff;
+    --ok-bg: #e6f6ea; --ok-text: #1e6b34; --err-bg: #fdecec; --err-text: #a12626;
+    --field: #ffffff; --bar: #2b6cb0; --bar-low: #c53030; --track: #e4e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --card: #1f2227; --text: #e7e9ec; --muted: #9aa1ab;
+      --border: #363a41; --accent: #5a9be0; --accent-text: #0d1117;
+      --ok-bg: #173523; --ok-text: #8fe0a8; --err-bg: #3d1a1a; --err-text: #f5a3a3;
+      --field: #16181c; --bar: #5a9be0; --bar-low: #f56565; --track: #30343a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    max-width: 560px; margin: 0 auto; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  h2 { margin: 24px 0 8px; font-size: 1.1rem; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  label { display: block; font-size: 0.9rem; color: var(--muted); margin: 10px 0 4px; }
+  input, textarea {
+    width: 100%; padding: 9px 10px; font: inherit; color: var(--text);
+    background: var(--field); border: 1px solid var(--border); border-radius: 8px;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button {
+    padding: 8px 14px; font: inherit; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    white-space: nowrap;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button.danger { background: transparent; color: var(--err-text); border-color: var(--err-text); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-weight: 600; }
+  .status.ok { background: var(--ok-bg); color: var(--ok-text); }
+  .status.err { background: var(--err-bg); color: var(--err-text); }
+  .accounts { list-style: none; margin: 0; padding: 0; }
+  .account { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .account .label { font-weight: 600; word-break: break-all; }
+  .account .issuer { color: var(--muted); font-size: 0.85rem; }
+  .account .code { font-size: 2rem; letter-spacing: 0.08em; margin: 4px 0; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--bar); transition: width 0.25s linear; }
+  .bar.low > div { background: var(--bar-low); }
+  .acct-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .empty { color: var(--muted); font-style: italic; margin-top: 10px; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0 0; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>My Authenticator</h1>
+  <p class="muted">A self-built TOTP (RFC 6238) authenticator. Accounts are stored only in this browser.</p>
+  <div id="crypto-warning" class="status err" hidden>
+    Web Crypto (crypto.subtle) is not available. It needs a secure context: open this page over
+    https or via http://localhost.
+  </div>
+
+  <section>
+    <h2>Add account</h2>
+    <label for="add-input">otpauth:// URI or Base32 secret</label>
+    <textarea id="add-input" class="mono" spellcheck="false" autocomplete="off"
+      placeholder="otpauth://totp/Issuer:alice?secret=JBSWY3DPEHPK3PXP&amp;issuer=Issuer"></textarea>
+    <label for="add-label">Label (only needed for a bare Base32 secret)</label>
+    <input id="add-label" autocomplete="off" placeholder="alice@example">
+    <div class="row" style="margin-top:10px">
+      <button id="add-btn" type="button">Add</button>
+    </div>
+    <div id="add-status" class="status" hidden></div>
+  </section>
+
+  <section>
+    <h2>Accounts</h2>
+    <ul id="accounts" class="accounts"></ul>
+    <p id="empty" class="empty">No accounts yet.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>Self-test</h2>
+    <p class="muted">Checks the RFC 6238 Appendix B SHA-1 test vectors (8 digits).</p>
+    <button id="selftest-btn" type="button" class="secondary">Run self-test</button>
+    <div id="selftest-status" class="status" hidden></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const STORAGE_KEY = "my-authenticator.accounts.v1";
+  const HASHES = { SHA1: "SHA-1", SHA256: "SHA-256", SHA512: "SHA-512" };
+
+  // ---- TOTP core (RFC 4648 Base32 + RFC 6238 TOTP via Web Crypto) ----
+  function base32Decode(s) {
+    const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = 0, value = 0, out = [];
+    for (const c of s.replace(/=+$/, "").replace(/\s+/g, "").toUpperCase()) {
+      const i = A.indexOf(c); if (i < 0) throw new Error("Invalid Base32 character: " + c);
+      value = (value << 5) | i; bits += 5;
+      if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+    }
+    return new Uint8Array(out);
+  }
+  async function totp(secretB32, { step = 30, digits = 6, hash = "SHA-1", now = Date.now() } = {}) {
+    const counter = Math.floor(now / 1000 / step);
+    const msg = new ArrayBuffer(8);
+    new DataView(msg).setBigUint64(0, BigInt(counter));
+    const key = await crypto.subtle.importKey("raw", base32Decode(secretB32), { name: "HMAC", hash }, false, ["sign"]);
+    const h = new Uint8Array(await crypto.subtle.sign("HMAC", key, msg));
+    const off = h[h.length - 1] & 0x0f;
+    const bin = ((h[off] & 0x7f) << 24) | (h[off+1] << 16) | (h[off+2] << 8) | h[off+3];
+    return String(bin % 10 ** digits).padStart(digits, "0");
+  }
+
+  // ---- helpers ----
+  function showStatus(el, ok, text) {
+    el.hidden = false;
+    el.className = "status " + (ok ? "ok" : "err");
+    el.textContent = text;
+  }
+  function formatCode(code) {
+    if (code.length === 6) return code.slice(0, 3) + " " + code.slice(3);
+    if (code.length === 8) return code.slice(0, 4) + " " + code.slice(4);
+    return code;
+  }
+  function normalizeSecret(s) {
+    return s.replace(/\s+/g, "").replace(/=+$/, "").toUpperCase();
+  }
+  function validateSecret(secret) {
+    if (!secret) throw new Error("Secret is empty");
+    const bytes = base32Decode(secret); // throws on invalid characters
+    if (bytes.length === 0) throw new Error("Secret is too short");
+  }
+
+  function loadAccounts() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function saveAccounts() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Parse an otpauth:// URI or a bare Base32 secret into an account object.
+  function parseInput(text, labelText) {
+    text = text.trim();
+    if (!text) throw new Error("Paste an otpauth:// URI or a Base32 secret");
+    if (/^otpauth:/i.test(text)) {
+      let url;
+      try { url = new URL(text); } catch (e) { throw new Error("Not a valid URI"); }
+      if (url.protocol.toLowerCase() !== "otpauth:") throw new Error("Not an otpauth:// URI");
+      if (url.host.toLowerCase() !== "totp") throw new Error("Only otpauth://totp/ is supported (got '" + url.host + "')");
+      const label = decodeURIComponent(url.pathname.replace(/^\/+/, "")).trim();
+      const p = url.searchParams;
+      const secret = normalizeSecret(p.get("secret") || "");
+      validateSecret(secret);
+      const algorithm = (p.get("algorithm") || "SHA1").toUpperCase().replace("-", "");
+      if (!HASHES[algorithm]) throw new Error("Unsupported algorithm: " + algorithm);
+      const digits = p.has("digits") ? parseInt(p.get("digits"), 10) : 6;
+      if (!(digits >= 6 && digits <= 8)) throw new Error("Unsupported digits: " + p.get("digits"));
+      const period = p.has("period") ? parseInt(p.get("period"), 10) : 30;
+      if (!(period > 0)) throw new Error("Invalid period: " + p.get("period"));
+      let issuer = p.get("issuer") || "";
+      if (!issuer && label.includes(":")) issuer = label.split(":")[0].trim();
+      return { label: label || "(no label)", issuer, secret, algorithm, digits, period };
+    }
+    const secret = normalizeSecret(text);
+    validateSecret(secret);
+    const label = labelText.trim();
+    if (!label) throw new Error("Enter a label for the bare Base32 secret");
+    return { label, issuer: "", secret, algorithm: "SHA1", digits: 6, period: 30 };
+  }
+
+  // ---- state & rendering ----
+  let accounts = loadAccounts();
+  const hasCrypto = !!(globalThis.crypto && crypto.subtle);
+
+  function render() {
+    const ul = $("accounts");
+    ul.textContent = "";
+    $("empty").hidden = accounts.length > 0;
+    accounts.forEach((a, idx) => {
+      const li = document.createElement("li");
+      li.className = "account";
+      li.dataset.idx = String(idx);
+
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = a.label;
+      li.appendChild(label);
+      if (a.issuer) {
+        const iss = document.createElement("div");
+        iss.className = "issuer";
+        iss.textContent = a.issuer + " · " + a.algorithm + " · " + a.digits + " digits · " + a.period + "s";
+        li.appendChild(iss);
+      }
+
+      const code = document.createElement("div");
+      code.className = "code mono";
+      code.textContent = "—";
+      li.appendChild(code);
+
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      bar.appendChild(document.createElement("div"));
+      li.appendChild(bar);
+
+      const foot = document.createElement("div");
+      foot.className = "acct-foot";
+      const secs = document.createElement("span");
+      secs.className = "muted secs";
+      foot.appendChild(secs);
+      const btns = document.createElement("div");
+      btns.className = "row";
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "secondary"; copy.textContent = "Copy";
+      copy.addEventListener("click", () => copyCode(li, copy));
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "danger"; del.textContent = "Delete";
+      del.addEventListener("click", () => {
+        if (!confirm("Delete account '" + a.label + "'?")) return;
+        accounts.splice(idx, 1);
+        saveAccounts();
+        render();
+      });
+      btns.appendChild(copy); btns.appendChild(del);
+      foot.appendChild(btns);
+      li.appendChild(foot);
+
+      ul.appendChild(li);
+    });
+    tick();
+  }
+
+  let tickId = 0;
+  async function tick() {
+    const myTick = ++tickId;
+    const now = Date.now();
+    const items = $("accounts").children;
+    for (const li of items) {
+      const a = accounts[Number(li.dataset.idx)];
+      if (!a) continue;
+      const elapsed = (now / 1000) % a.period;
+      const remaining = Math.ceil(a.period - elapsed);
+      const pct = ((a.period - elapsed) / a.period) * 100;
+      const bar = li.querySelector(".bar");
+      bar.firstChild.style.width = pct.toFixed(1) + "%";
+      bar.classList.toggle("low", remaining <= 5);
+      li.querySelector(".secs").textContent = remaining + "s remaining";
+      const codeEl = li.querySelector(".code");
+      if (!hasCrypto) { codeEl.textContent = "unavailable"; continue; }
+      try {
+        const code = await totp(a.secret, { step: a.period, digits: a.digits, hash: HASHES[a.algorithm] || "SHA-1", now });
+        if (myTick !== tickId) return; // a newer tick/render took over
+        codeEl.textContent = formatCode(code);
+        li.dataset.code = code;
+      } catch (e) {
+        codeEl.textContent = "error";
+        li.dataset.code = "";
+      }
+    }
+  }
+
+  async function copyCode(li, btn) {
+    const code = li.dataset.code;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      btn.textContent = "Copied";
+    } catch (e) {
+      btn.textContent = "Copy failed";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+  }
+
+  function addAccount() {
+    const status = $("add-status");
+    try {
+      const acct = parseInput($("add-input").value, $("add-label").value);
+      accounts.push(acct);
+      const saved = saveAccounts();
+      render();
+      $("add-input").value = "";
+      $("add-label").value = "";
+      showStatus(status, true, "Added " + acct.label + (saved ? "" : " (could not save to localStorage; it will be lost on reload)"));
+    } catch (e) {
+      showStatus(status, false, e.message);
+    }
+  }
+
+  async function selfTest() {
+    const status = $("selftest-status");
+    if (!hasCrypto) { showStatus(status, false, "Cannot run: Web Crypto is unavailable (needs https or localhost)."); return; }
+    const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // ASCII "12345678901234567890"
+    const vectors = [[59, "94287082"], [1111111109, "07081804"]];
+    const lines = [];
+    let allOk = true;
+    try {
+      for (const [t, expected] of vectors) {
+        const got = await totp(secret, { digits: 8, now: t * 1000 });
+        const ok = got === expected;
+        allOk = allOk && ok;
+        lines.push((ok ? "PASS" : "FAIL") + "  T=" + t + "  expected " + expected + ", got " + got);
+      }
+    } catch (e) {
+      allOk = false;
+      lines.push("Error: " + e.message);
+    }
+    showStatus(status, allOk, lines.join("\n"));
+    status.style.whiteSpace = "pre-wrap";
+    status.classList.add("mono");
+  }
+
+  // ---- wire up ----
+  if (!hasCrypto) $("crypto-warning").hidden = false;
+  $("add-btn").addEventListener("click", addAccount);
+  $("add-label").addEventListener("keydown", (e) => { if (e.key === "Enter") addAccount(); });
+  $("selftest-btn").addEventListener("click", selfTest);
+  window.addEventListener("storage", (e) => {
+    if (e.key === STORAGE_KEY) { accounts = loadAccounts(); render(); }
+  });
+  render();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
